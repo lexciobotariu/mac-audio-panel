@@ -52,10 +52,10 @@ extension AudioObjectID {
         var address = propertyAddress(selector)
         var size = UInt32(MemoryLayout<T>.size)
         var value = initial
-        try check(
-            AudioObjectGetPropertyData(self, &address, 0, nil, &size, &value),
-            "read \(fourCC(OSStatus(bitPattern: selector))) on \(self)"
-        )
+        let status = withUnsafeMutablePointer(to: &value) {
+            AudioObjectGetPropertyData(self, &address, 0, nil, &size, $0)
+        }
+        try check(status, "read \(fourCC(OSStatus(bitPattern: selector))) on \(self)")
         return value
     }
 
