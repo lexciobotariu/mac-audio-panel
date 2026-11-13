@@ -41,14 +41,15 @@ public final class Muter {
             self?.refresh()
         })
         listeners.append(try onSystemChange(kAudioHardwarePropertyDefaultOutputDevice, queue: queue) { [weak self] in
-            guard let self else { return }
             let uid = (try? defaultOutputDeviceUID()) ?? "?"
             log("default output changed to \(uid)")
-            if self.mode.needsReader, !self.tappedObjects.isEmpty {
-                log("rebuilding reader for the new output device")
-                self.tappedObjects = []
-                self.refresh()
-            }
+            self?.rebuildReaderIfNeeded()
+        })
+        // A device appearing or disappearing (display, headphones) can kill the
+        // reader's aggregate even when the default output stays the same.
+        listeners.append(try onSystemChange(kAudioHardwarePropertyDevices, queue: queue) { [weak self] in
+            log("device list changed")
+            self?.rebuildReaderIfNeeded()
         })
         // Backup poll: also reports when the app starts or stops producing sound.
         let timer = DispatchSource.makeTimerSource(queue: queue)
@@ -62,6 +63,29 @@ public final class Muter {
 
     private var timer: DispatchSourceTimer?
     private var listeners: [PropertyListener] = []
+    private var readerOutputUID: String?
+
+    /// Recreates the tap and reader from scratch, e.g. after the Mac wakes.
+    public func rebuild() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            log("rebuilding mute for \(self.target)")
+            self.tappedObjects = []
+            self.refresh()
+        }
+    }
+
+    /// Rebuilds only when the output the reader is attached to is no longer the
+    /// default. Our own aggregate devices also change the device list, so a
+    /// blind rebuild here would loop forever.
+    private func rebuildReaderIfNeeded() {
+        guard mode.needsReader, !tappedObjects.isEmpty else { return }
+        let current = try? defaultOutputDeviceUID()
+        guard current != readerOutputUID else { return }
+        log("rebuilding reader for \(target): output is now \(current ?? "?")")
+        tappedObjects = []
+        refresh()
+    }
 
     public func stop() {
         listeners.forEach { $0.cancel() }
@@ -161,6 +185,7 @@ public final class Muter {
     /// and writes silence.
     private func startReader(tapUUID: UUID) throws -> (AudioObjectID, AudioDeviceIOProcID?) {
         let outputUID = try defaultOutputDeviceUID()
+        readerOutputUID = outputUID
         let config: [String: Any] = [
             kAudioAggregateDeviceNameKey: "audiotap reader",
             kAudioAggregateDeviceUIDKey: UUID().uuidString,

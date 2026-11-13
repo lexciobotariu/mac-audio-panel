@@ -31,6 +31,7 @@ final class AppListModel {
     @ObservationIgnored private var processListener: PropertyListener?
     @ObservationIgnored private var pollTimer: Timer?
     @ObservationIgnored private let ownBundleID = Bundle.main.bundleIdentifier
+    @ObservationIgnored private let settings = SettingsStore()
 
     init() {
         processListener = try? onSystemChange(kAudioHardwarePropertyProcessObjectList, queue: .main) { [weak self] in
@@ -43,29 +44,65 @@ final class AppListModel {
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.unmuteAll() }
+            MainActor.assumeIsolated { self?.stopAllMuters() }
+        }
+        // Taps and aggregate devices may not survive sleep; rebuild on wake.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.muters.values.forEach { $0.rebuild() } }
+        }
+
+        // Re-apply saved mutes. A muter for an app that is not running simply
+        // waits and mutes it the moment it starts using audio.
+        for (bundleID, name) in settings.mutedApps {
+            rememberInfo(for: bundleID, fallbackName: name)
+            startMuter(for: bundleID)
         }
         refresh()
     }
 
     func toggleMute(_ bundleID: String) {
+        var saved = settings.mutedApps
         if let muter = muters.removeValue(forKey: bundleID) {
             muter.stop()
-        } else {
-            let muter = Muter(target: bundleID, mode: .mutedWithReader)
-            do {
-                try muter.start()
-                muters[bundleID] = muter
-            } catch {
-                log("could not mute \(bundleID): \(error)")
-            }
+            saved[bundleID] = nil
+        } else if startMuter(for: bundleID) {
+            saved[bundleID] = appInfo[bundleID]?.name ?? bundleID
         }
+        settings.mutedApps = saved
         refresh()
     }
 
-    func unmuteAll() {
+    @discardableResult
+    private func startMuter(for bundleID: String) -> Bool {
+        let muter = Muter(target: bundleID, mode: .mutedWithReader)
+        do {
+            try muter.start()
+            muters[bundleID] = muter
+            return true
+        } catch {
+            log("could not mute \(bundleID): \(error)")
+            return false
+        }
+    }
+
+    /// Stops tapping on quit. Saved mutes are kept and re-applied next launch.
+    private func stopAllMuters() {
         muters.values.forEach { $0.stop() }
         muters.removeAll()
+    }
+
+    /// Name and icon for an app that may not be running, from its installed bundle.
+    private func rememberInfo(for bundleID: String, fallbackName: String) {
+        guard appInfo[bundleID] == nil else { return }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            let name = FileManager.default.displayName(atPath: url.path)
+                .replacingOccurrences(of: ".app", with: "")
+            appInfo[bundleID] = (name: name, icon: NSWorkspace.shared.icon(forFile: url.path))
+        } else {
+            appInfo[bundleID] = (name: fallbackName, icon: NSWorkspace.shared.icon(for: .application))
+        }
     }
 
     func refresh() {
