@@ -1,0 +1,24 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build app bundle
+        run: ./scripts/build-app.sh
+      - name: Build audiotap
+        run: swift build -c release --product audiotap
+      - name: Smoke test audiotap
+        run: |
+          .build/release/audiotap --help
+          .build/release/audiotap list --all || true
+      - name: Check app bundle
+        run: |
+          plutil -lint build/MacAudioPanel.app/Contents/Info.plist
+          codesign --verify --verbose build/MacAudioPanel.app
