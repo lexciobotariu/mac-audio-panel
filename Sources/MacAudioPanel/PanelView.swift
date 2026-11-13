@@ -32,6 +32,7 @@ struct PanelView: View {
         }
         .padding(12)
         .frame(width: 320)
+        .syncWindowHeight()
         .onAppear { loginItem.reload() }
     }
 }
