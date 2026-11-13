@@ -23,6 +23,7 @@ Other targets:
 
 ```sh
 make app      # build the .app only
+make dmg      # build/MacAudioPanel-<version>.dmg
 make cli      # build the audiotap command-line tool
 make clean
 ```
@@ -35,3 +36,7 @@ make clean
 | `Sources/MacAudioPanel` | SwiftUI menu-bar app |
 | `Sources/audiotap` | Command-line debugging tool from the M0 spike |
 | `scripts/build-app.sh` | Wraps the binary into a signed `.app` |
+
+## Releasing
+
+See [docs/releasing.md](docs/releasing.md). Push a `v*` tag and GitHub Actions publishes a DMG.

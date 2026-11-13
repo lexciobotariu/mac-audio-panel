@@ -11,6 +11,7 @@ struct AppEntry: Identifiable, Equatable {
     let icon: NSImage
     var isPlaying: Bool
     var isMuted: Bool
+    var isFavorite: Bool
 }
 
 @MainActor
@@ -18,10 +19,13 @@ struct AppEntry: Identifiable, Equatable {
 final class AppListModel {
     private(set) var apps: [AppEntry] = []
     var showAll = false
+    /// Shown in the panel until dismissed; cleared on the next successful mute.
+    private(set) var errorMessage: String?
+    private(set) var showOnboarding: Bool
 
-    /// Playing or muted apps, or every app using audio when Show All is on.
+    /// Playing, muted or starred apps, or every app using audio with Show All.
     var visibleApps: [AppEntry] {
-        showAll ? apps : apps.filter { $0.isPlaying || $0.isMuted }
+        showAll ? apps : apps.filter { $0.isPlaying || $0.isMuted || $0.isFavorite }
     }
 
     var playingCount: Int { apps.filter { $0.isPlaying && !$0.isMuted }.count }
@@ -31,9 +35,13 @@ final class AppListModel {
     @ObservationIgnored private var processListener: PropertyListener?
     @ObservationIgnored private var pollTimer: Timer?
     @ObservationIgnored private let ownBundleID = Bundle.main.bundleIdentifier
-    @ObservationIgnored private let settings = SettingsStore()
+    @ObservationIgnored private let settings: SettingsStore
+    @ObservationIgnored private var favorites: Set<String>
 
-    init() {
+    init(settings: SettingsStore = SettingsStore()) {
+        self.settings = settings
+        self.favorites = settings.favoriteApps
+        self.showOnboarding = !settings.hasSeenOnboarding
         processListener = try? onSystemChange(kAudioHardwarePropertyProcessObjectList, queue: .main) { [weak self] in
             MainActor.assumeIsolated { self?.refresh() }
         }
@@ -74,15 +82,42 @@ final class AppListModel {
         refresh()
     }
 
+    func toggleFavorite(_ bundleID: String) {
+        if favorites.remove(bundleID) == nil { favorites.insert(bundleID) }
+        settings.favoriteApps = favorites
+        refresh()
+    }
+
+    func dismissError() { errorMessage = nil }
+
+    func dismissOnboarding() {
+        settings.hasSeenOnboarding = true
+        showOnboarding = false
+    }
+
+    /// Opens the Privacy & Security pane where System Audio Recording is granted.
+    func openPrivacySettings() {
+        let urls = [
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+        ]
+        for string in urls {
+            if let url = URL(string: string), NSWorkspace.shared.open(url) { return }
+        }
+    }
+
     @discardableResult
     private func startMuter(for bundleID: String) -> Bool {
         let muter = Muter(target: bundleID, mode: .mutedWithReader)
         do {
             try muter.start()
             muters[bundleID] = muter
+            errorMessage = nil
             return true
         } catch {
             log("could not mute \(bundleID): \(error)")
+            let name = appInfo[bundleID]?.name ?? bundleID
+            errorMessage = "Couldn't mute \(name). Check that Mac Audio Panel is allowed under System Audio Recording. (\(error))"
             return false
         }
     }
@@ -117,8 +152,12 @@ final class AppListModel {
             else { continue }
             playing[bundleID] = (playing[bundleID] ?? false) || process.isRunningOutput
         }
-        // Muted apps stay listed even while they have no audio process.
+        // Muted and starred apps stay listed even while they have no audio process.
         for bundleID in muters.keys where playing[bundleID] == nil && appInfo[bundleID] != nil {
+            playing[bundleID] = false
+        }
+        for bundleID in favorites where playing[bundleID] == nil {
+            rememberInfo(for: bundleID, fallbackName: bundleID)
             playing[bundleID] = false
         }
 
@@ -129,10 +168,12 @@ final class AppListModel {
                 name: info.name,
                 icon: info.icon,
                 isPlaying: isPlaying,
-                isMuted: muters[bundleID] != nil
+                isMuted: muters[bundleID] != nil,
+                isFavorite: favorites.contains(bundleID)
             )
         }
         .sorted {
+            if $0.isFavorite != $1.isFavorite { return $0.isFavorite }
             if $0.isPlaying != $1.isPlaying { return $0.isPlaying }
             return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }

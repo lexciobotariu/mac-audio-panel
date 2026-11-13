@@ -1,4 +1,4 @@
-.PHONY: app run cli clean
+.PHONY: app run cli dmg clean
 
 app:
 	./scripts/build-app.sh
@@ -6,6 +6,9 @@ app:
 run: app
 	-pkill -x MacAudioPanel
 	open build/MacAudioPanel.app
+
+dmg: app
+	./scripts/make-dmg.sh
 
 cli:
 	swift build -c release --product audiotap

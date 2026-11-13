@@ -1,0 +1,75 @@
+name: release
+
+# Push a tag like v1.0.0 to build a DMG and attach it to a GitHub release.
+# With the signing secrets set (see docs/releasing.md) the DMG is Developer ID
+# signed and notarized; without them it is ad-hoc signed (right-click > Open).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      HAS_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
+      HAS_NOTARY: ${{ secrets.APPLE_APP_PASSWORD != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version from tag
+        run: |
+          REF="${GITHUB_REF_NAME}"
+          if [[ "$REF" == v* ]]; then echo "VERSION=${REF#v}" >> "$GITHUB_ENV"; else echo "VERSION=0.0.0-dev" >> "$GITHUB_ENV"; fi
+          echo "BUILD_NUMBER=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+
+      - name: Import Developer ID certificate
+        if: env.HAS_CERT == 'true'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          SIGN_IDENTITY_NAME: ${{ secrets.SIGN_IDENTITY }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          echo "SIGN_IDENTITY=$SIGN_IDENTITY_NAME" >> "$GITHUB_ENV"
+
+      - name: Build app
+        run: ./scripts/build-app.sh
+
+      - name: Build DMG
+        run: echo "DMG=$(./scripts/make-dmg.sh | tail -1)" >> "$GITHUB_ENV"
+
+      - name: Notarize
+        if: env.HAS_CERT == 'true' && env.HAS_NOTARY == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: ./scripts/notarize.sh "$DMG"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacAudioPanel-${{ env.VERSION }}
+          path: ${{ env.DMG }}
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTE="Ad-hoc signed: right-click the app and choose Open the first time."
+          if [[ "$HAS_CERT" == "true" && "$HAS_NOTARY" == "true" ]]; then NOTE="Signed and notarized."; fi
+          gh release create "$GITHUB_REF_NAME" "$DMG" --title "Mac Audio Panel $VERSION" --notes "$NOTE"
