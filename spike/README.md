@@ -18,8 +18,8 @@ cp .build/release/audiotap /usr/local/bin/   # optional
 ```sh
 audiotap list              # apps playing sound right now
 audiotap list --all        # every process that has used Core Audio
-audiotap mute com.spotify.client                       # default mode: muted
-audiotap mute com.spotify.client --mode muted+reader
+audiotap mute com.spotify.client                       # default mode: muted+reader
+audiotap mute com.spotify.client --mode muted
 audiotap mute com.spotify.client --mode when-tapped
 ```
 
@@ -32,8 +32,9 @@ System Settings > Privacy & Security > Screen & System Audio Recording.
 
 ## What to test
 
-Run each row with the default mode first. Only try `muted+reader` and
-`when-tapped` if the default mode does not silence the app.
+Finding so far (2026-11-13, Chrome): a plain `.muted` tap does **not** silence
+the app; it only mutes once something reads the tap. `muted+reader` (now the
+default) and `when-tapped` both work. Run the rows below with the default mode.
 
 | # | Scenario | How |
 |---|----------|-----|

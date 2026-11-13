@@ -11,8 +11,8 @@ USAGE
       Mutes every audio process of the app (helpers included) until Ctrl-C.
       Keeps following the app: relaunches and new helper processes are re-muted.
       Modes:
-        muted          .muted tap, nothing reads it (default; the one we hope works)
-        muted+reader   .muted tap + private aggregate device reading it
+        muted+reader   .muted tap + private aggregate device reading it (default)
+        muted          .muted tap, nothing reads it (does NOT mute on its own; kept for reference)
         when-tapped    .mutedWhenTapped tap + reader (fallback)
 
 EXAMPLES
@@ -87,7 +87,7 @@ case "mute":
         print(usage)
         exit(2)
     }
-    var mode = Muter.Mode.muted
+    var mode = Muter.Mode.mutedWithReader
     if let i = arguments.firstIndex(of: "--mode") {
         guard i + 1 < arguments.count, let parsed = Muter.Mode(rawValue: arguments[i + 1]) else {
             print("unknown mode; use muted, muted+reader or when-tapped")
