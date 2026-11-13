@@ -1,0 +1,22 @@
+name: spike build
+
+on:
+  push:
+    branches: [main]
+    paths: ["spike/**", ".github/workflows/spike-build.yml"]
+  pull_request:
+    paths: ["spike/**", ".github/workflows/spike-build.yml"]
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build audiotap
+        working-directory: spike
+        run: swift build -c release
+      - name: Smoke test (help and list)
+        working-directory: spike
+        run: |
+          .build/release/audiotap --help
+          .build/release/audiotap list --all || true
