@@ -4,11 +4,11 @@ import Foundation
 
 // MARK: - Errors and logging
 
-struct CAError: Error, CustomStringConvertible {
-    let status: OSStatus
-    let what: String
+public struct CAError: Error, CustomStringConvertible {
+    public let status: OSStatus
+    public let what: String
 
-    var description: String { "\(what) failed: \(fourCC(status))" }
+    public var description: String { "\(what) failed: \(fourCC(status))" }
 }
 
 func check(_ status: OSStatus, _ what: String) throws {
@@ -27,7 +27,7 @@ func fourCC(_ status: OSStatus) -> String {
 
 private let startTime = Date()
 
-func log(_ message: String) {
+public func log(_ message: String) {
     let t = Date().timeIntervalSince(startTime)
     print(String(format: "[%8.3f] ", t) + message)
     fflush(stdout)
@@ -98,27 +98,27 @@ private let responsiblePIDFn: ResponsibleFn? = {
     return unsafeBitCast(symbol, to: ResponsibleFn.self)
 }()
 
-struct AudioProcess {
-    let objectID: AudioObjectID
-    let pid: pid_t
-    let bundleID: String?
-    let isRunningOutput: Bool
-    let responsiblePID: pid_t
-    let responsibleBundleID: String?
+public struct AudioProcess: Sendable {
+    public let objectID: AudioObjectID
+    public let pid: pid_t
+    public let bundleID: String?
+    public let isRunningOutput: Bool
+    public let responsiblePID: pid_t
+    public let responsibleBundleID: String?
 
     /// The bundle ID a user would recognise: the responsible app's, if any.
-    var appBundleID: String? { responsibleBundleID ?? bundleID }
+    public var appBundleID: String? { responsibleBundleID ?? bundleID }
 
     /// Matches the target bundle ID itself, its helpers (bundle ID prefix),
     /// or anything macOS says the target app is responsible for.
-    func matches(_ target: String) -> Bool {
+    public func matches(_ target: String) -> Bool {
         if bundleID == target || responsibleBundleID == target { return true }
         if let bundleID, bundleID.hasPrefix(target + ".") { return true }
         return false
     }
 }
 
-func listAudioProcesses() throws -> [AudioProcess] {
+public func listAudioProcesses() throws -> [AudioProcess] {
     try AudioObjectID.system.readObjectIDs(kAudioHardwarePropertyProcessObjectList).compactMap { id in
         guard let pid = try? id.read(kAudioProcessPropertyPID, initial: pid_t(-1)), pid > 0 else {
             return nil
@@ -140,7 +140,7 @@ func listAudioProcesses() throws -> [AudioProcess] {
     }
 }
 
-func defaultOutputDeviceUID() throws -> String {
+public func defaultOutputDeviceUID() throws -> String {
     let device = try AudioObjectID.system.read(kAudioHardwarePropertyDefaultOutputDevice, initial: AudioObjectID.unknown)
     guard device != .unknown, let uid = try device.readString(kAudioDevicePropertyDeviceUID) else {
         throw CAError(status: -1, what: "find default output device")
@@ -148,11 +148,35 @@ func defaultOutputDeviceUID() throws -> String {
     return uid
 }
 
-/// Calls `handler` on `queue` whenever a system-object property changes.
-func onSystemChange(_ selector: AudioObjectPropertySelector, queue: DispatchQueue, _ handler: @escaping () -> Void) throws {
-    var address = propertyAddress(selector)
-    try check(
-        AudioObjectAddPropertyListenerBlock(.system, &address, queue) { _, _ in handler() },
-        "add listener"
-    )
+/// Keeps a Core Audio property listener installed until it is cancelled or released.
+public final class PropertyListener {
+    private var address: AudioObjectPropertyAddress
+    private let queue: DispatchQueue
+    private let block: AudioObjectPropertyListenerBlock
+    private var active = true
+
+    fileprivate init(selector: AudioObjectPropertySelector, queue: DispatchQueue, handler: @escaping () -> Void) throws {
+        self.address = propertyAddress(selector)
+        self.queue = queue
+        self.block = { _, _ in handler() }
+        try check(AudioObjectAddPropertyListenerBlock(.system, &address, queue, block), "add listener")
+    }
+
+    public func cancel() {
+        guard active else { return }
+        active = false
+        AudioObjectRemovePropertyListenerBlock(.system, &address, queue, block)
+    }
+
+    deinit { cancel() }
+}
+
+/// Calls `handler` on `queue` whenever a system-object property changes,
+/// until the returned listener is cancelled or released.
+public func onSystemChange(
+    _ selector: AudioObjectPropertySelector,
+    queue: DispatchQueue,
+    _ handler: @escaping () -> Void
+) throws -> PropertyListener {
+    try PropertyListener(selector: selector, queue: queue, handler: handler)
 }

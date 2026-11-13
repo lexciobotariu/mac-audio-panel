@@ -7,9 +7,10 @@ Requires macOS 14.4+ and Xcode 15.3+ (or the matching Command Line Tools).
 
 ## Build
 
+From the repository root:
+
 ```sh
-cd spike
-swift build -c release
+make cli                      # builds .build/release/audiotap
 cp .build/release/audiotap /usr/local/bin/   # optional
 ```
 

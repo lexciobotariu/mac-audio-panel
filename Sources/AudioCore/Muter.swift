@@ -3,8 +3,8 @@ import Foundation
 
 /// Keeps every audio process of one app muted with a single process tap,
 /// following the app as processes come and go.
-final class Muter {
-    enum Mode: String {
+public final class Muter {
+    public enum Mode: String, Sendable {
         /// `.muted` tap, nobody reads it. The cheapest option, if it works.
         case muted
         /// `.muted` tap plus a private aggregate device that reads and discards it.
@@ -19,8 +19,8 @@ final class Muter {
         var needsReader: Bool { self != .muted }
     }
 
-    let target: String
-    let mode: Mode
+    public let target: String
+    public let mode: Mode
     let queue = DispatchQueue(label: "audiotap.muter")
 
     private var tapID = AudioObjectID.unknown
@@ -29,18 +29,18 @@ final class Muter {
     private var tappedObjects: Set<AudioObjectID> = []
     private var runningOutput: [AudioObjectID: Bool] = [:]
 
-    init(target: String, mode: Mode) {
+    public init(target: String, mode: Mode) {
         self.target = target
         self.mode = mode
     }
 
     /// Starts watching. Everything after this runs on `queue`.
-    func start() throws {
-        try onSystemChange(kAudioHardwarePropertyProcessObjectList, queue: queue) { [weak self] in
+    public func start() throws {
+        listeners.append(try onSystemChange(kAudioHardwarePropertyProcessObjectList, queue: queue) { [weak self] in
             log("process list changed")
             self?.refresh()
-        }
-        try onSystemChange(kAudioHardwarePropertyDefaultOutputDevice, queue: queue) { [weak self] in
+        })
+        listeners.append(try onSystemChange(kAudioHardwarePropertyDefaultOutputDevice, queue: queue) { [weak self] in
             guard let self else { return }
             let uid = (try? defaultOutputDeviceUID()) ?? "?"
             log("default output changed to \(uid)")
@@ -49,7 +49,7 @@ final class Muter {
                 self.tappedObjects = []
                 self.refresh()
             }
-        }
+        })
         // Backup poll: also reports when the app starts or stops producing sound.
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + 1, repeating: 1)
@@ -61,8 +61,11 @@ final class Muter {
     }
 
     private var timer: DispatchSourceTimer?
+    private var listeners: [PropertyListener] = []
 
-    func stop() {
+    public func stop() {
+        listeners.forEach { $0.cancel() }
+        listeners = []
         queue.sync {
             timer?.cancel()
             destroy(tap: tapID, aggregate: aggregateID, ioProc: ioProcID)

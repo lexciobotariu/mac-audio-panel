@@ -1,4 +1,5 @@
 import Foundation
+import AudioCore
 
 let usage = """
 audiotap: M0 spike for per-app mute with Core Audio process taps.
